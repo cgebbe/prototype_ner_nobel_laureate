@@ -317,53 +317,6 @@ def _get_raw_datasets(data_args, cache_dir):
     return raw_datasets
 
 
-def _extract_dataset_info(
-    raw_datasets,
-    data_args,
-    use_train,
-):
-    if use_train:
-        column_names = raw_datasets["train"].column_names
-        features = raw_datasets["train"].features
-    else:
-        column_names = raw_datasets["validation"].column_names
-        features = raw_datasets["validation"].features
-
-    if data_args.text_column_name is not None:
-        text_column_name = data_args.text_column_name
-    elif "tokens" in column_names:
-        text_column_name = "tokens"
-    else:
-        text_column_name = column_names[0]
-
-    if data_args.label_column_name is not None:
-        label_column_name = data_args.label_column_name
-    elif f"{data_args.task_name}_tags" in column_names:
-        label_column_name = f"{data_args.task_name}_tags"
-    else:
-        label_column_name = column_names[1]
-
-    # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the
-    # unique labels.gi
-    def get_label_list(labels):
-        unique_labels = set()
-        for label in labels:
-            unique_labels = unique_labels | set(label)
-        label_list = list(unique_labels)
-        label_list.sort()
-        return label_list
-
-    if isinstance(features[label_column_name].feature, ClassLabel):
-        label_list = features[label_column_name].feature.names
-        # No need to convert the labels since they are already ints.
-        label_to_id = {i: i for i in range(len(label_list))}
-    else:
-        label_list = get_label_list(raw_datasets["train"][label_column_name])
-        label_to_id = {l: i for i, l in enumerate(label_list)}
-
-    return text_column_name, label_column_name, label_list, label_to_id
-
-
 def _get_b_to_i_label(label_list):
     # Map that sends B-Xxx label to its I-Xxx counterpart
     b_to_i_label = []
@@ -375,12 +328,104 @@ def _get_b_to_i_label(label_list):
     return b_to_i_label
 
 
+class DatasetAnalyzer:
+    def __init__(self, data_args) -> None:
+        self.data_args = data_args
+
+    def get_labels(self, raw_datasets, use_train):
+        if use_train:
+            column_names = raw_datasets["train"].column_names
+            features = raw_datasets["train"].features
+        else:
+            column_names = raw_datasets["validation"].column_names
+            features = raw_datasets["validation"].features
+
+        if self.data_args.text_column_name is not None:
+            text_column_name = self.data_args.text_column_name
+        elif "tokens" in column_names:
+            text_column_name = "tokens"
+        else:
+            text_column_name = column_names[0]
+
+        if self.data_args.label_column_name is not None:
+            label_column_name = self.data_args.label_column_name
+        elif f"{self.data_args.task_name}_tags" in column_names:
+            label_column_name = f"{self.data_args.task_name}_tags"
+        else:
+            label_column_name = column_names[1]
+
+        # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the
+        # unique labels.gi
+        def get_label_list(labels):
+            unique_labels = set()
+            for label in labels:
+                unique_labels = unique_labels | set(label)
+            label_list = list(unique_labels)
+            label_list.sort()
+            return label_list
+
+        if isinstance(features[label_column_name].feature, ClassLabel):
+            label_list = features[label_column_name].feature.names
+            # No need to convert the labels since they are already ints.
+            label_to_id = {i: i for i in range(len(label_list))}
+        else:
+            label_list = get_label_list(raw_datasets["train"][label_column_name])
+            label_to_id = {l: i for i, l in enumerate(label_list)}
+
+        self.text_column_name = text_column_name
+        self.label_column_name = label_column_name
+        return label_list, label_to_id
+
+    def create_preprocessing(self, tokenizer, label_list, label_to_id):
+        b_to_i_label = _get_b_to_i_label(label_list=label_list)
+        padding = "max_length" if self.data_args.pad_to_max_length else False
+
+        # Tokenize all texts and align the labels with them.
+        def tokenize_and_align_labels(data_item):
+            tokenized_inputs = tokenizer(
+                data_item[self.text_column_name],
+                padding=padding,
+                truncation=True,
+                max_length=self.data_args.max_seq_length,
+                # We use this argument because the texts in our dataset are lists of words (with a label for each word).
+                is_split_into_words=True,
+            )
+            labels = []
+            for i, label in enumerate(data_item[self.label_column_name]):
+                word_ids = tokenized_inputs.word_ids(batch_index=i)
+                previous_word_idx = None
+                label_ids = []
+                for word_idx in word_ids:
+                    # Special tokens have a word id that is None. We set the label to -100 so they are automatically
+                    # ignored in the loss function.
+                    if word_idx is None:
+                        label_ids.append(-100)
+                    # We set the label for the first token of each word.
+                    elif word_idx != previous_word_idx:
+                        label_ids.append(label_to_id[label[word_idx]])
+                    # For the other tokens in a word, we set the label to either the current label or -100, depending on
+                    # the label_all_tokens flag.
+                    else:
+                        if self.data_args.label_all_tokens:
+                            label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
+                        else:
+                            label_ids.append(-100)
+                    previous_word_idx = word_idx
+
+                labels.append(label_ids)
+            tokenized_inputs["labels"] = labels
+            return tokenized_inputs
+
+        return tokenize_and_align_labels
+
+
 def _load_model_and_tokenizer(
     model_args,
-    num_labels,
     label_to_id,
     data_args,
 ):
+    num_labels = len(label_to_id)
+
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -620,7 +665,7 @@ def _run(
                     writer.write(" ".join(prediction) + "\n")
 
 
-def main():
+def _get_args():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
@@ -635,7 +680,11 @@ def main():
         )
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    return model_args, data_args, training_args
 
+
+def main():
+    model_args, data_args, training_args = _get_args()
     _setup_logging(training_args=training_args)
     set_seed(training_args.seed)
 
@@ -643,71 +692,26 @@ def main():
     raw_datasets = _get_raw_datasets(
         data_args=data_args, cache_dir=model_args.cache_dir
     )
-    (
-        text_column_name,
-        label_column_name,
-        label_list,
-        label_to_id,
-    ) = _extract_dataset_info(
-        raw_datasets=raw_datasets,
-        data_args=data_args,
-        use_train=training_args.do_train,
+    dataset_analyzer = DatasetAnalyzer(data_args=data_args)
+    label_list, label_to_id = dataset_analyzer.get_labels(
+        raw_datasets=raw_datasets, use_train=training_args.do_train
     )
-    num_labels = len(label_list)
-    b_to_i_label = _get_b_to_i_label(label_list=label_list)
-
     model, tokenizer = _load_model_and_tokenizer(
         model_args=model_args,
-        num_labels=num_labels,
         label_to_id=label_to_id,
         data_args=data_args,
     )
 
-    # Preprocessing the dataset
-    # Padding strategy
-    padding = "max_length" if data_args.pad_to_max_length else False
-
-    # Tokenize all texts and align the labels with them.
-    def tokenize_and_align_labels(examples):
-        tokenized_inputs = tokenizer(
-            examples[text_column_name],
-            padding=padding,
-            truncation=True,
-            max_length=data_args.max_seq_length,
-            # We use this argument because the texts in our dataset are lists of words (with a label for each word).
-            is_split_into_words=True,
-        )
-        labels = []
-        for i, label in enumerate(examples[label_column_name]):
-            word_ids = tokenized_inputs.word_ids(batch_index=i)
-            previous_word_idx = None
-            label_ids = []
-            for word_idx in word_ids:
-                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
-                # ignored in the loss function.
-                if word_idx is None:
-                    label_ids.append(-100)
-                # We set the label for the first token of each word.
-                elif word_idx != previous_word_idx:
-                    label_ids.append(label_to_id[label[word_idx]])
-                # For the other tokens in a word, we set the label to either the current label or -100, depending on
-                # the label_all_tokens flag.
-                else:
-                    if data_args.label_all_tokens:
-                        label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
-                    else:
-                        label_ids.append(-100)
-                previous_word_idx = word_idx
-
-            labels.append(label_ids)
-        tokenized_inputs["labels"] = labels
-        return tokenized_inputs
-
+    preprocess_func = dataset_analyzer.create_preprocessing(
+        tokenizer=tokenizer,
+        label_list=label_list,
+        label_to_id=label_to_id,
+    )
     train_dataset, eval_dataset, predict_dataset = get_final_datasets(
         raw_datasets=raw_datasets,
         data_args=data_args,
         training_args=training_args,
-        tokenize_and_align_labels=tokenize_and_align_labels,
+        tokenize_and_align_labels=preprocess_func,
     )
 
     compute_metrics = _create_compute_metrics(
