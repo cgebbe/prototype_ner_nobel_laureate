@@ -360,8 +360,11 @@ def _extract_dataset_info(
     else:
         label_list = get_label_list(raw_datasets["train"][label_column_name])
         label_to_id = {l: i for i, l in enumerate(label_list)}
-    num_labels = len(label_list)
 
+    return text_column_name, label_column_name, label_list, label_to_id
+
+
+def _get_b_to_i_label(label_list):
     # Map that sends B-Xxx label to its I-Xxx counterpart
     b_to_i_label = []
     for idx, label in enumerate(label_list):
@@ -369,15 +372,7 @@ def _extract_dataset_info(
             b_to_i_label.append(label_list.index(label.replace("B-", "I-")))
         else:
             b_to_i_label.append(idx)
-
-    return (
-        text_column_name,
-        label_column_name,
-        label_list,
-        label_to_id,
-        b_to_i_label,
-        num_labels,
-    )
+    return b_to_i_label
 
 
 def _load_model_and_tokenizer(
@@ -509,105 +504,7 @@ def get_final_datasets(
     return train_dataset, eval_dataset, predict_dataset
 
 
-def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
-    parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments)
-    )
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(
-            json_file=os.path.abspath(sys.argv[1])
-        )
-    else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
-    _setup_logging(training_args=training_args)
-    last_checkpoint = _detect_last_checkpoint(training_args=training_args)
-    set_seed(training_args.seed)
-
-    # setup raw dataset
-    raw_datasets = _get_raw_datasets(
-        data_args=data_args, cache_dir=model_args.cache_dir
-    )
-    (
-        text_column_name,
-        label_column_name,
-        label_list,
-        label_to_id,
-        b_to_i_label,
-        num_labels,
-    ) = _extract_dataset_info(
-        raw_datasets=raw_datasets,
-        data_args=data_args,
-        use_train=training_args.do_train,
-    )
-
-    model, tokenizer = _load_model_and_tokenizer(
-        model_args=model_args,
-        num_labels=num_labels,
-        label_to_id=label_to_id,
-        data_args=data_args,
-    )
-
-    # Preprocessing the dataset
-    # Padding strategy
-    padding = "max_length" if data_args.pad_to_max_length else False
-
-    # Tokenize all texts and align the labels with them.
-    def tokenize_and_align_labels(examples):
-        tokenized_inputs = tokenizer(
-            examples[text_column_name],
-            padding=padding,
-            truncation=True,
-            max_length=data_args.max_seq_length,
-            # We use this argument because the texts in our dataset are lists of words (with a label for each word).
-            is_split_into_words=True,
-        )
-        labels = []
-        for i, label in enumerate(examples[label_column_name]):
-            word_ids = tokenized_inputs.word_ids(batch_index=i)
-            previous_word_idx = None
-            label_ids = []
-            for word_idx in word_ids:
-                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
-                # ignored in the loss function.
-                if word_idx is None:
-                    label_ids.append(-100)
-                # We set the label for the first token of each word.
-                elif word_idx != previous_word_idx:
-                    label_ids.append(label_to_id[label[word_idx]])
-                # For the other tokens in a word, we set the label to either the current label or -100, depending on
-                # the label_all_tokens flag.
-                else:
-                    if data_args.label_all_tokens:
-                        label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
-                    else:
-                        label_ids.append(-100)
-                previous_word_idx = word_idx
-
-            labels.append(label_ids)
-        tokenized_inputs["labels"] = labels
-        return tokenized_inputs
-
-    train_dataset, eval_dataset, predict_dataset = get_final_datasets(
-        raw_datasets=raw_datasets,
-        data_args=data_args,
-        training_args=training_args,
-        tokenize_and_align_labels=tokenize_and_align_labels,
-    )
-
-    ######## SETUP TRAINER
-
-    # Data collator
-    data_collator = DataCollatorForTokenClassification(
-        tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None
-    )
-
-    # Metrics
+def _create_compute_metrics(label_list, data_args):
     metric = load_metric("seqeval")
 
     def compute_metrics(p):
@@ -643,18 +540,19 @@ def main():
                 "accuracy": results["overall_accuracy"],
             }
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-    )
+    return compute_metrics
 
-    ### RUN stuff
+
+def _run(
+    trainer,
+    train_dataset,
+    eval_dataset,
+    predict_dataset,
+    training_args,
+    data_args,
+    label_list,
+):
+    last_checkpoint = _detect_last_checkpoint(training_args=training_args)
 
     # Training
     if training_args.do_train:
@@ -720,6 +618,122 @@ def main():
             with open(output_predictions_file, "w") as writer:
                 for prediction in true_predictions:
                     writer.write(" ".join(prediction) + "\n")
+
+
+def main():
+    # See all possible arguments in src/transformers/training_args.py
+    # or by passing the --help flag to this script.
+    # We now keep distinct sets of args, for a cleaner separation of concerns.
+    parser = HfArgumentParser(
+        (ModelArguments, DataTrainingArguments, TrainingArguments)
+    )
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+        # If we pass only one argument to the script and it's the path to a json file,
+        # let's parse it to get our arguments.
+        model_args, data_args, training_args = parser.parse_json_file(
+            json_file=os.path.abspath(sys.argv[1])
+        )
+    else:
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
+    _setup_logging(training_args=training_args)
+    set_seed(training_args.seed)
+
+    # setup raw dataset
+    raw_datasets = _get_raw_datasets(
+        data_args=data_args, cache_dir=model_args.cache_dir
+    )
+    (
+        text_column_name,
+        label_column_name,
+        label_list,
+        label_to_id,
+    ) = _extract_dataset_info(
+        raw_datasets=raw_datasets,
+        data_args=data_args,
+        use_train=training_args.do_train,
+    )
+    num_labels = len(label_list)
+    b_to_i_label = _get_b_to_i_label(label_list=label_list)
+
+    model, tokenizer = _load_model_and_tokenizer(
+        model_args=model_args,
+        num_labels=num_labels,
+        label_to_id=label_to_id,
+        data_args=data_args,
+    )
+
+    # Preprocessing the dataset
+    # Padding strategy
+    padding = "max_length" if data_args.pad_to_max_length else False
+
+    # Tokenize all texts and align the labels with them.
+    def tokenize_and_align_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples[text_column_name],
+            padding=padding,
+            truncation=True,
+            max_length=data_args.max_seq_length,
+            # We use this argument because the texts in our dataset are lists of words (with a label for each word).
+            is_split_into_words=True,
+        )
+        labels = []
+        for i, label in enumerate(examples[label_column_name]):
+            word_ids = tokenized_inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            label_ids = []
+            for word_idx in word_ids:
+                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
+                # ignored in the loss function.
+                if word_idx is None:
+                    label_ids.append(-100)
+                # We set the label for the first token of each word.
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label_to_id[label[word_idx]])
+                # For the other tokens in a word, we set the label to either the current label or -100, depending on
+                # the label_all_tokens flag.
+                else:
+                    if data_args.label_all_tokens:
+                        label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
+                    else:
+                        label_ids.append(-100)
+                previous_word_idx = word_idx
+
+            labels.append(label_ids)
+        tokenized_inputs["labels"] = labels
+        return tokenized_inputs
+
+    train_dataset, eval_dataset, predict_dataset = get_final_datasets(
+        raw_datasets=raw_datasets,
+        data_args=data_args,
+        training_args=training_args,
+        tokenize_and_align_labels=tokenize_and_align_labels,
+    )
+
+    compute_metrics = _create_compute_metrics(
+        label_list=label_list, data_args=data_args
+    )
+    data_collator = DataCollatorForTokenClassification(
+        tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None
+    )
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset if training_args.do_train else None,
+        eval_dataset=eval_dataset if training_args.do_eval else None,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics,
+    )
+    _run(
+        trainer=trainer,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        predict_dataset=predict_dataset,
+        training_args=training_args,
+        data_args=data_args,
+        label_list=label_list,
+    )
 
     kwargs = {
         "finetuned_from": model_args.model_name_or_path,
