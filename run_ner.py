@@ -183,20 +183,14 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
         self.task_name = self.task_name.lower()
 
+@dataclass
+class AllArgs:
+    model: ModelArguments
+    train: TrainingArguments
+    data: DataTrainingArguments
 
-def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
-    else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
+def _setup_logging(training_args):
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -218,6 +212,7 @@ def main():
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
+def _detect_last_checkpoint(training_args):
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -232,10 +227,9 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
+    return last_checkpoint
 
-    # Set seed before initializing model.
-    set_seed(training_args.seed)
-
+def _get_raw_datasets(data_args, cache_dir):
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub).
@@ -248,7 +242,7 @@ def main():
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
-            data_args.dataset_name, data_args.dataset_config_name, cache_dir=model_args.cache_dir
+            data_args.dataset_name, data_args.dataset_config_name, cache_dir=cache_dir
         )
     else:
         data_files = {}
@@ -259,9 +253,30 @@ def main():
         if data_args.test_file is not None:
             data_files["test"] = data_args.test_file
         extension = data_args.train_file.split(".")[-1]
-        raw_datasets = load_dataset(extension, data_files=data_files, cache_dir=model_args.cache_dir)
+        raw_datasets = load_dataset(extension, data_files=data_files, cache_dir=cache_dir)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
+    return raw_datasets
+
+
+def main():
+    # See all possible arguments in src/transformers/training_args.py
+    # or by passing the --help flag to this script.
+    # We now keep distinct sets of args, for a cleaner separation of concerns.
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+        # If we pass only one argument to the script and it's the path to a json file,
+        # let's parse it to get our arguments.
+        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+    else:
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
+    _setup_logging(training_args=training_args)
+    last_checkpoint = _detect_last_checkpoint(training_args=training_args)
+    set_seed(training_args.seed)
+
+    # setup raw dataset
+    raw_datasets = _get_raw_datasets(data_args=data_args,cache_dir=model_args.cache_dir)
 
     if training_args.do_train:
         column_names = raw_datasets["train"].column_names
@@ -285,7 +300,7 @@ def main():
         label_column_name = column_names[1]
 
     # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the
-    # unique labels.
+    # unique labels.gi
     def get_label_list(labels):
         unique_labels = set()
         for label in labels:
@@ -448,6 +463,8 @@ def main():
                 desc="Running tokenizer on prediction dataset",
             )
 
+    ######## SETUP TRAINER
+
     # Data collator
     data_collator = DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
 
@@ -497,6 +514,8 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
+
+    ### RUN stuff
 
     # Training
     if training_args.do_train:

@@ -34,7 +34,10 @@ python3 run_ner.py \
   --dataset_name conll2003 \
   --output_dir /tmp/test-ner \
   --do_train \
-  --do_eval
+  --do_eval \
+  --max_train_samples 3 \
+  --max_eval_samples 5 \
+  --overwrite_output_dir
 ```
 
 ## How does custom dataset need to look like? (instead of conll2003?)
