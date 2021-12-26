@@ -1,0 +1,5 @@
+# from https://hub.docker.com/r/huggingface/transformers-pytorch-gpu
+FROM huggingface/transformers-pytorch-gpu:4.9.1 
+
+# install datasets from huggingface
+# RUN pip install datasets
