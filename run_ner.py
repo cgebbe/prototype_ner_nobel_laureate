@@ -317,32 +317,12 @@ def _get_raw_datasets(data_args, cache_dir):
     return raw_datasets
 
 
-def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
-    parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments)
-    )
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(
-            json_file=os.path.abspath(sys.argv[1])
-        )
-    else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
-    _setup_logging(training_args=training_args)
-    last_checkpoint = _detect_last_checkpoint(training_args=training_args)
-    set_seed(training_args.seed)
-
-    # setup raw dataset
-    raw_datasets = _get_raw_datasets(
-        data_args=data_args, cache_dir=model_args.cache_dir
-    )
-
-    if training_args.do_train:
+def _extract_dataset_info(
+    raw_datasets,
+    data_args,
+    use_train,
+):
+    if use_train:
         column_names = raw_datasets["train"].column_names
         features = raw_datasets["train"].features
     else:
@@ -390,6 +370,22 @@ def main():
         else:
             b_to_i_label.append(idx)
 
+    return (
+        text_column_name,
+        label_column_name,
+        label_list,
+        label_to_id,
+        b_to_i_label,
+        num_labels,
+    )
+
+
+def _load_model_and_tokenizer(
+    model_args,
+    num_labels,
+    label_to_id,
+    data_args,
+):
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -447,6 +443,115 @@ def main():
             "at https://huggingface.co/transformers/index.html#supported-frameworks to find the model types that meet this "
             "requirement"
         )
+    return model, tokenizer
+
+
+def get_final_datasets(
+    raw_datasets,
+    data_args,
+    training_args,
+    tokenize_and_align_labels,
+):
+    train_dataset = None
+    if training_args.do_train:
+        if "train" not in raw_datasets:
+            raise ValueError("--do_train requires a train dataset")
+        train_dataset = raw_datasets["train"]
+        if data_args.max_train_samples is not None:
+            train_dataset = train_dataset.select(range(data_args.max_train_samples))
+        with training_args.main_process_first(desc="train dataset map pre-processing"):
+            train_dataset = train_dataset.map(
+                tokenize_and_align_labels,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc="Running tokenizer on train dataset",
+            )
+
+    eval_dataset = None
+    if training_args.do_eval:
+        if "validation" not in raw_datasets:
+            raise ValueError("--do_eval requires a validation dataset")
+        eval_dataset = raw_datasets["validation"]
+        if data_args.max_eval_samples is not None:
+            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+        with training_args.main_process_first(
+            desc="validation dataset map pre-processing"
+        ):
+            eval_dataset = eval_dataset.map(
+                tokenize_and_align_labels,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc="Running tokenizer on validation dataset",
+            )
+
+    predict_dataset = None
+    if training_args.do_predict:
+        if "test" not in raw_datasets:
+            raise ValueError("--do_predict requires a test dataset")
+        predict_dataset = raw_datasets["test"]
+        if data_args.max_predict_samples is not None:
+            predict_dataset = predict_dataset.select(
+                range(data_args.max_predict_samples)
+            )
+        with training_args.main_process_first(
+            desc="prediction dataset map pre-processing"
+        ):
+            predict_dataset = predict_dataset.map(
+                tokenize_and_align_labels,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc="Running tokenizer on prediction dataset",
+            )
+
+    return train_dataset, eval_dataset, predict_dataset
+
+
+def main():
+    # See all possible arguments in src/transformers/training_args.py
+    # or by passing the --help flag to this script.
+    # We now keep distinct sets of args, for a cleaner separation of concerns.
+    parser = HfArgumentParser(
+        (ModelArguments, DataTrainingArguments, TrainingArguments)
+    )
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+        # If we pass only one argument to the script and it's the path to a json file,
+        # let's parse it to get our arguments.
+        model_args, data_args, training_args = parser.parse_json_file(
+            json_file=os.path.abspath(sys.argv[1])
+        )
+    else:
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
+    _setup_logging(training_args=training_args)
+    last_checkpoint = _detect_last_checkpoint(training_args=training_args)
+    set_seed(training_args.seed)
+
+    # setup raw dataset
+    raw_datasets = _get_raw_datasets(
+        data_args=data_args, cache_dir=model_args.cache_dir
+    )
+    (
+        text_column_name,
+        label_column_name,
+        label_list,
+        label_to_id,
+        b_to_i_label,
+        num_labels,
+    ) = _extract_dataset_info(
+        raw_datasets=raw_datasets,
+        data_args=data_args,
+        use_train=training_args.do_train,
+    )
+
+    model, tokenizer = _load_model_and_tokenizer(
+        model_args=model_args,
+        num_labels=num_labels,
+        label_to_id=label_to_id,
+        data_args=data_args,
+    )
 
     # Preprocessing the dataset
     # Padding strategy
@@ -488,56 +593,12 @@ def main():
         tokenized_inputs["labels"] = labels
         return tokenized_inputs
 
-    if training_args.do_train:
-        if "train" not in raw_datasets:
-            raise ValueError("--do_train requires a train dataset")
-        train_dataset = raw_datasets["train"]
-        if data_args.max_train_samples is not None:
-            train_dataset = train_dataset.select(range(data_args.max_train_samples))
-        with training_args.main_process_first(desc="train dataset map pre-processing"):
-            train_dataset = train_dataset.map(
-                tokenize_and_align_labels,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc="Running tokenizer on train dataset",
-            )
-
-    if training_args.do_eval:
-        if "validation" not in raw_datasets:
-            raise ValueError("--do_eval requires a validation dataset")
-        eval_dataset = raw_datasets["validation"]
-        if data_args.max_eval_samples is not None:
-            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
-        with training_args.main_process_first(
-            desc="validation dataset map pre-processing"
-        ):
-            eval_dataset = eval_dataset.map(
-                tokenize_and_align_labels,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc="Running tokenizer on validation dataset",
-            )
-
-    if training_args.do_predict:
-        if "test" not in raw_datasets:
-            raise ValueError("--do_predict requires a test dataset")
-        predict_dataset = raw_datasets["test"]
-        if data_args.max_predict_samples is not None:
-            predict_dataset = predict_dataset.select(
-                range(data_args.max_predict_samples)
-            )
-        with training_args.main_process_first(
-            desc="prediction dataset map pre-processing"
-        ):
-            predict_dataset = predict_dataset.map(
-                tokenize_and_align_labels,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc="Running tokenizer on prediction dataset",
-            )
+    train_dataset, eval_dataset, predict_dataset = get_final_datasets(
+        raw_datasets=raw_datasets,
+        data_args=data_args,
+        training_args=training_args,
+        tokenize_and_align_labels=tokenize_and_align_labels,
+    )
 
     ######## SETUP TRAINER
 
