@@ -9,6 +9,11 @@
 
 ## Sources
 
+- inference
+  - https://huggingface.co/docs/transformers/task_summary#named-entity-recognition
+- training
+  - https://huggingface.co/docs/transformers/tra  ining
+
 - simple NER pipeline
   - https://huggingface.co/dslim/bert-base-NER
 - simple 
@@ -80,6 +85,11 @@ docker container start doccano
 # to stop
 docker container stop doccano -t 5
 ```
+
+## Why does tokenizer sometimes split word?
+
+- ['EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'lamb', '.']
+- ['[CLS]', 'EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'la', '##mb', '.', '[SEP]', '[PAD]', '[PAD]', ...]
 
 ### Exported text file is binary :/
 

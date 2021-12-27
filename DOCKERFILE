@@ -2,4 +2,4 @@
 FROM huggingface/transformers-pytorch-gpu:4.9.1 
 
 # install datasets from huggingface
-# RUN pip install datasets
+RUN pip install datasets seqeval

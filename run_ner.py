@@ -490,7 +490,7 @@ def get_final_datasets(
     raw_datasets,
     data_args,
     training_args,
-    tokenize_and_align_labels,
+    preprocess_func,
 ):
     train_dataset = None
     if training_args.do_train:
@@ -501,7 +501,7 @@ def get_final_datasets(
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
         with training_args.main_process_first(desc="train dataset map pre-processing"):
             train_dataset = train_dataset.map(
-                tokenize_and_align_labels,
+                preprocess_func,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -519,7 +519,7 @@ def get_final_datasets(
             desc="validation dataset map pre-processing"
         ):
             eval_dataset = eval_dataset.map(
-                tokenize_and_align_labels,
+                preprocess_func,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -539,7 +539,7 @@ def get_final_datasets(
             desc="prediction dataset map pre-processing"
         ):
             predict_dataset = predict_dataset.map(
-                tokenize_and_align_labels,
+                preprocess_func,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -711,7 +711,7 @@ def main():
         raw_datasets=raw_datasets,
         data_args=data_args,
         training_args=training_args,
-        tokenize_and_align_labels=preprocess_func,
+        preprocess_func=preprocess_func,
     )
 
     compute_metrics = _create_compute_metrics(

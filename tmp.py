@@ -1,9 +1,7 @@
-import json
+from datasets import Dataset
 
-path = (
-    r"/mnt/sda1/projects/git/prototypes/202112_ner/data/NER_Einstein/labels_manual.json"
-)
-with open(path) as f:
-    dct = json.load(f)
+my_dict = {'id': [0, 1, 2],
+           'name': ['mary', 'bob', 'eve'],
+           'age': [24, 53, 19]}
 
-print(dct)
+ds = Dataset.from_dict(my_dict)
