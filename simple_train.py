@@ -41,11 +41,7 @@ def preprocess(data_item):
         )
         labels.append(token_labels)
     tokens["labels"] = labels
-
-    # assert len(labels) == num_batches
-    # for k, v in tokens.items():
-    #     print(f"key {k} has {len(v)} labels")
-
+    assert len(labels) == num_batches
     return tokens
 
 
@@ -85,25 +81,6 @@ labels = features["ner_tags"].feature.names
 model = transformers.AutoModelForTokenClassification.from_pretrained(
     "bert-base-cased", num_labels=len(labels), cache_dir=".cache"
 )
-
-iterator = iter(ds_train)
-batch = next(iter(iterator))
-for k, v in batch.items():
-    print(f"key {k} has {len(v)} values")
-"""
-key id has 4 values   -> idx of batch
-
-key chunk_tags has 9 values -> from data_item
-key ner_tags has 9 values
-key pos_tags has 9 values
-key tokens has 9 values
-
-key attention_mask has 512 values -> from token
-key input_ids has 512 values
-key labels has 512 values
-key token_type_ids has 512 values
-"""
-
 
 class CustomTrainer(transformers.Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
