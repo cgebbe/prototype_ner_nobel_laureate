@@ -3,7 +3,7 @@ Train example from https://huggingface.co/docs/transformers/training
 """
 import transformers
 from datasets import load_dataset
-from torch import nn
+from pprint import pprint
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(
     "bert-base-cased", cache_dir=".cache"
@@ -14,14 +14,6 @@ IGNORE_LABEL = -100
 
 
 def preprocess(data_item):
-    """
-
-    Output needs
-    - input_ids
-    - token_type_ids ?!
-    - attention_mask
-    - labels
-    """
     # data_item has dict_keys(['id', 'tokens', 'pos_tags', 'chunk_tags', 'ner_tags'])
     # each entry is a list of BATCH_SIZE length
     tokens = tokenizer(
@@ -30,14 +22,15 @@ def preprocess(data_item):
         truncation=True,
         is_split_into_words=True,
     )
-    # tokens has dict_keys(['input_ids', 'token_type_ids', 'attention_mask']).
 
+    # tokens has dict_keys(['input_ids', 'token_type_ids', 'attention_mask']),
+    # but is missing the labels, which previously existed per word
     labels = []
     num_batches = len(tokens["input_ids"])
     for idx_batch in range(num_batches):
         token_labels = _convert_wordlabels_to_tokenlabels(
             word_labels=data_item["ner_tags"][idx_batch],
-            word_idx_per_token=tokens.word_ids(batch_index=idx_batch),
+            word_idx_per_token=tokens[idx_batch].word_ids,
         )
         labels.append(token_labels)
     tokens["labels"] = labels
@@ -78,25 +71,21 @@ ds_eval = ds["test"].shuffle(seed=42).select(range(2))
 features = raw_datasets["train"].features
 labels = features["ner_tags"].feature.names
 
+# we could also limit the model to a sequence length of 256, but then couldn't load the pretrained weights
 model = transformers.AutoModelForTokenClassification.from_pretrained(
-    "bert-base-cased", num_labels=len(labels), cache_dir=".cache"
+    "bert-base-cased",
+    num_labels=len(labels),
+    cache_dir=".cache",
+    gradient_checkpointing=True,  # see BertConfig and https://github.com/huggingface/transformers/blob/0735def8e1200ed45a2c33a075bc1595b12ef56a/src/transformers/modeling_bert.py#L461
 )
 
-class CustomTrainer(transformers.Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        outputs = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            token_type_ids=inputs["token_type_ids"], # (8,512)
-        )
-        outputs.logits.shape # 8,512,2
-        inputs["labels"].shape # 8,512
-        # output logits (8,2), inputs["labels"] has shape (8,512)
-        loss = nn.BCEWithLogitsLoss()(outputs["logits"], inputs["labels"])
-        return (loss, outputs) if return_outputs else loss
-
-
-training_args = transformers.TrainingArguments("test_trainer")
+training_args = transformers.TrainingArguments(
+    "test_trainer",
+    num_train_epochs=2, # defaults to 3
+    per_device_train_batch_size=8,  # defaults to 8
+    gradient_accumulation_steps=2,  # defaults to 1
+    # no_cuda=True,  # if GPU too small, see https://github.com/google-research/bert/blob/master/README.md#out-of-memory-issues
+)
 trainer = transformers.Trainer(
     model=model,
     args=training_args,
@@ -104,4 +93,5 @@ trainer = transformers.Trainer(
     # eval_dataset=ds_eval,
 )
 ret = trainer.train()
+pprint(ret)
 d = 0
