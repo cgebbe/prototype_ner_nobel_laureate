@@ -106,8 +106,11 @@ docker container stop doccano -t 5
 # How to setup project next time
 
 - setup DOCKERFILE
+  - use GPU?!
   - use colored terminal https://stackoverflow.com/a/33499558/2135504
-  - use own ID https://issueexplorer.com/issue/microsoft/vscode-remote-release/5542
+  - use own ID
+    - https://issueexplorer.com/issue/microsoft/vscode-remote-release/5542
+    - https://medium.com/redbubble/running-a-docker-container-as-a-non-root-user-7d2e00f8ee15
 - setup README.md
 - git init -> first commit
 - setup .vscode
