@@ -1,8 +1,9 @@
 # from https://hub.docker.com/r/huggingface/transformers-pytorch-gpu
 FROM huggingface/transformers-pytorch-gpu:4.9.1 
 
-# install datasets from huggingface
-RUN pip install datasets seqeval black
+RUN pip install black
+RUN pip install datasets
+RUN pip install seqeval
 
 # https://github.com/microsoft/vscode-remote-release/issues/22#issuecomment-488843424
 ARG USERNAME=cgebbe

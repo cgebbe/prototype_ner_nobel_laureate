@@ -2,14 +2,13 @@
 Train example from https://huggingface.co/docs/transformers/training
 """
 import transformers
-from datasets import load_dataset
+from datasets import load_dataset, load_metric
 from pprint import pprint
+import numpy as np
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(
     "bert-base-cased", cache_dir=".cache"
 )
-
-
 IGNORE_LABEL = -100
 
 
@@ -24,7 +23,7 @@ def preprocess(data_item):
     )
 
     # tokens has dict_keys(['input_ids', 'token_type_ids', 'attention_mask']),
-    # but is missing the labels, which previously existed per word
+    # but is missing 'labels'!
     labels = []
     num_batches = len(tokens["input_ids"])
     for idx_batch in range(num_batches):
@@ -65,8 +64,8 @@ def _convert_wordlabels_to_tokenlabels(word_labels, word_idx_per_token):
 
 raw_datasets = load_dataset("conll2003", cache_dir=".cache")
 ds = raw_datasets.map(preprocess, batched=True, batch_size=100)
-ds_train = ds["train"].shuffle(seed=42).select(range(2))
-ds_eval = ds["test"].shuffle(seed=42).select(range(2))
+ds_train = ds["train"].shuffle(seed=42).select(range(200))
+ds_eval = ds["test"].shuffle(seed=42).select(range(200))
 
 features = raw_datasets["train"].features
 labels = features["ner_tags"].feature.names
@@ -79,10 +78,39 @@ model = transformers.AutoModelForTokenClassification.from_pretrained(
     gradient_checkpointing=True,  # see BertConfig and https://github.com/huggingface/transformers/blob/0735def8e1200ed45a2c33a075bc1595b12ef56a/src/transformers/modeling_bert.py#L461
 )
 
+
+metric = load_metric("seqeval")
+
+
+def compute_metrics(p):
+    y_true = p.label_ids
+    y_pred = np.argmax(p.predictions, axis=2)  # (batch_size,512,num_labels)
+    assert y_pred.shape == y_true.shape  # (batch_size,512)
+
+    # change to nested list and replace
+    words_pred = [
+        [labels[p] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(y_pred, y_true)
+    ]
+    words_true = [
+        [labels[l] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(y_pred, y_true)
+    ]
+
+    results = metric.compute(predictions=words_pred, references=words_true)
+    return {
+        "precision": results["overall_precision"],
+        "recall": results["overall_recall"],
+        "f1": results["overall_f1"],
+        "accuracy": results["overall_accuracy"],
+    }
+
+
 training_args = transformers.TrainingArguments(
     "test_trainer",
-    num_train_epochs=2, # defaults to 3
+    num_train_epochs=2,  # defaults to 3
     per_device_train_batch_size=8,  # defaults to 8
+    evaluation_strategy="epoch",
     gradient_accumulation_steps=2,  # defaults to 1
     # no_cuda=True,  # if GPU too small, see https://github.com/google-research/bert/blob/master/README.md#out-of-memory-issues
 )
@@ -90,8 +118,13 @@ trainer = transformers.Trainer(
     model=model,
     args=training_args,
     train_dataset=ds_train,
-    # eval_dataset=ds_eval,
+    eval_dataset=ds_eval,
+    compute_metrics=compute_metrics,
 )
-ret = trainer.train()
-pprint(ret)
+train_output = trainer.train()
+pprint(train_output.metrics)
+
+evaluation_metrics = trainer.evaluate()
+pprint(evaluation_metrics)
+
 d = 0
