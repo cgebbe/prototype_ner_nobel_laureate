@@ -47,7 +47,7 @@ python3 run_ner.py \
 
 ## How does custom dataset need to look like? (instead of conll2003?)
 
-- https://huggingface.co/docs/datasets/loading_datasets.html
+- https://huggingface.co/docs/datasets/loading_datasets.html#from-local-or-remote-files
   - does huggingface use IOB or IOB2 format?
 
 ## How to compute metric?
