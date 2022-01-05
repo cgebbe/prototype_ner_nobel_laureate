@@ -8,7 +8,7 @@ import numpy as np
 import datetime
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(
-    "bert-base-cased", cache_dir=".cache"
+    "distilbert-base-cased", cache_dir=".cache"
 )
 IGNORE_LABEL = -100
 
@@ -74,43 +74,57 @@ labels = features["ner_tags"].feature.names
 
 # we could also limit the model to a sequence length of 256, but then couldn't load the pretrained weights
 model = transformers.AutoModelForTokenClassification.from_pretrained(
-    "bert-base-cased",
+    "distilbert-base-cased",
     num_labels=len(labels),
     cache_dir=".cache",
-    gradient_checkpointing=True,  # see BertConfig and https://github.com/huggingface/transformers/blob/0735def8e1200ed45a2c33a075bc1595b12ef56a/src/transformers/modeling_bert.py#L461
+    # gradient_checkpointing only works for bert, not for distilbert
+    # gradient_checkpointing=True,  # see BertConfig and https://github.com/huggingface/transformers/blob/0735def8e1200ed45a2c33a075bc1595b12ef56a/src/transformers/modeling_bert.py#L461
 )
 
-# seqeval directly supports IOB, IOB2, see https://github.com/chakki-works/seqeval
-metric = load_metric("seqeval")
 
+def create_metric_function(labels, ignore_label):
+    """Creates metric
 
-def compute_metrics(p):
-    y_true = p.label_ids
-    y_pred = np.argmax(p.predictions, axis=2)  # (batch_size,512,num_labels)
-    assert y_pred.shape == y_true.shape  # (batch_size,512)
+    Args:
+        labels (List[str]): e.g. ['O', 'B_PER', 'I_PER']
+        IGNORE_LABEL (int): label ID to ignore
 
-    # change to nested list and replace
-    words_pred = [
-        [labels[p] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(y_pred, y_true)
-    ]
-    words_true = [
-        [labels[l] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(y_pred, y_true)
-    ]
+    Returns:
+        Callable[EvaluationOutput, Dict]: function to compute metric
+    """
+    # seqeval directly supports IOB, IOB2, see https://github.com/chakki-works/seqeval
+    metric = load_metric("seqeval")
 
-    results = metric.compute(
-        predictions=words_pred,
-        references=words_true,
-        scheme="IOB2",  # see https://huggingface.co/datasets/conll2003
-        mode="strict",
-    )
-    return {
-        "precision": results["overall_precision"],
-        "recall": results["overall_recall"],
-        "f1": results["overall_f1"],
-        "accuracy": results["overall_accuracy"],
-    }
+    def compute_metrics(p):
+        y_true = p.label_ids
+        y_pred = np.argmax(p.predictions, axis=2)  # (batch_size,512,num_labels)
+        assert y_pred.shape == y_true.shape  # (batch_size,512)
+
+        # change to nested list and replace
+        words_pred = [
+            [labels[p] for (p, l) in zip(prediction, label) if l != ignore_label]
+            for prediction, label in zip(y_pred, y_true)
+        ]
+        words_true = [
+            [labels[l] for (p, l) in zip(prediction, label) if l != ignore_label]
+            for prediction, label in zip(y_pred, y_true)
+        ]
+
+        results = metric.compute(
+            predictions=words_pred,
+            references=words_true,
+            scheme="IOB2",  # see https://huggingface.co/datasets/conll2003
+            mode="strict",
+            # zero_division='',  # TODO, check seqeval
+        )
+        return {
+            "precision": results["overall_precision"],
+            "recall": results["overall_recall"],
+            "f1": results["overall_f1"],
+            "accuracy": results["overall_accuracy"],
+        }
+
+    return compute_metrics
 
 
 output_dir = f"output/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -118,8 +132,8 @@ output_dir = f"output/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 training_args = transformers.TrainingArguments(
     # --- how to train
     num_train_epochs=3,  # defaults to 3
-    per_device_train_batch_size=8,  # defaults to 8
-    gradient_accumulation_steps=2,  # defaults to 1
+    per_device_train_batch_size=1,  # defaults to 8
+    gradient_accumulation_steps=8,  # defaults to 1
     # TODO: learning rate seems to decrease linearly :/
     # no_cuda=True,  # if GPU too small, see https://github.com/google-research/bert/blob/master/README.md#out-of-memory-issues
     # --- how to log
@@ -135,7 +149,7 @@ trainer = transformers.Trainer(
     args=training_args,
     train_dataset=ds_train,
     eval_dataset=ds_eval,
-    compute_metrics=compute_metrics,
+    compute_metrics=create_metric_function(labels, IGNORE_LABEL),
     # callbacks=[transformers.integrations.TensorBoardCallback()],
 )
 train_output = trainer.train()
