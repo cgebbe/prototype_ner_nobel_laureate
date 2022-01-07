@@ -1,7 +1,11 @@
-from datasets import Dataset
+from datasets import load_dataset
+from pprint import pprint
 
-my_dict = {'id': [0, 1, 2],
-           'name': ['mary', 'bob', 'eve'],
-           'age': [24, 53, 19]}
+ds = load_dataset("conll2003", cache_dir=".cache")
 
-ds = Dataset.from_dict(my_dict)
+ds = load_dataset("dataset.py", cache_dir=".cache")
+subset = ds["train"]
+
+num_items = len(subset)
+item = subset[0]
+pprint(item)
