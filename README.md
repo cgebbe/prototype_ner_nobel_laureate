@@ -1,34 +1,79 @@
-# Goal: train a simple NER task
+# About
 
-- [ ] overfit on single batch
-  - [x] gather data
-  - [ ] label manually - which format?
-  - [ ] preprocess and train
-  - [ ] 
+This is a simple prototype of how to do Named-entity recognition (NER) using the [huggingface](https://huggingface.co/) library.
 
+![banner](banner.png)
 
-## Sources
+## Problem (hypothetical)
 
-- inference
-  - https://huggingface.co/docs/transformers/task_summary#named-entity-recognition
-- training
-  - https://huggingface.co/docs/transformers/tra  ining
+Given the wikipedia summary of a Nobel laureate, identify the field in which the person receieved the Nobel prize.
 
-- simple NER pipeline
-  - https://huggingface.co/dslim/bert-base-NER
-- simple 
-  - https://huggingface.co/transformers/v2.4.0/examples.html#named-entity-recognition
-- NER = Token-classification, ahhhh!!
+## Solution
+
+- Prepare a very small dataset of only 10 sequences manually
+- Label it using [label studio](https://labelstud.io/)
+- Overfit a `Distilbert` model on the data
+- Test the trained model on a new sentence
+
+## Lessons learned
+
+- `huggingface` API for models, tokenizers and custom datasets
+- `label studio` seems like a great tool for different purposes
+- I was surprised that the model is able to achieve 100% recall and precision on this small dataset quasi out of the box. While the problem seems very easy, fields may consist of one or three words (e.g. "Physics" versus "Physiology or Medicine") and they can appear multiple times in one sequence.
+- `Distilbert` even fits on my 4GB laptop GPU using gradient accumulation.
+
+# FAQ
+
+## How to install
+
+Simply create a docker container based on [`Dockerfile`](Dockerfile)
+
+## How to run
+
+- Run `simple_train.py` to train a model. This will save tensorboard logs and the final model in the `output` directory.
+- Run `simple_inference.py` to run inference on the test dataset or any given sentence.
+
+# Notes
+
+## How to define a custom dataset in huggingface
+
+- https://huggingface.co/docs/datasets/loading_datasets.html#from-local-or-remote-files
+- https://huggingface.co/transformers/v3.2.0/custom_datasets.html
+- https://github.com/huggingface/datasets/blob/master/datasets/conll2003/conll2003.pys
+- only need two columns: "tokens" and "ner_tags"
+
+## How to label
+
+- see https://github.com/doccano/awesome-annotation-tools for comparison
+  - docker container start doccano
+    - > bug with exported json :/, see https://github.com/doccano/doccano/issues/1606
+  - bart
+    - > cannot download :/, also maybe outdated?!
+  - cd pwd/mnt/sda1/projects/git/prototypes/202112_ner/data/NER_Einstein
+  - docker run -it -p 8080:8080 heartexlabs/label-studio:1.4.0
+  - docker run -it -p 8080:8080 -v /mnt/sda1/projects/git/prototypes/202112_ner/data/NER_Einstein/mydata:/label-studio/data heartexlabs/label-studio:1.4.0 label-studio --log-level DEBUG
+  - docker run -it -p 8080:8080 -v /tmp/mydata:/label-studio/data heartexlabs/label-studio:1.4.0 label-studio --log-level DEBUG
+    - > works and can even export conll-format :)
+
+## How to start labeling studio
+
+```bash
+LOCAL_DIR="/mnt/sda1/projects/git/prototypes/202112_ner/data/label_studio"
+CONTAINER_DIR="/label-studio/data"
+docker run -it -p 8080:8080 -v $LOCAL_DIR:$CONTAINER_DIR heartexlabs/label-studio:1.4.0
+```
+
+## How to use NER with hugging-face?
+
+- NER is a subset of Token-classification
   - https://github.com/huggingface/transformers/tree/master/examples/pytorch/token-classification
-  - token classification = 
+  - token classification =
     - parts-of-speech tagging (POS) -> classify as VERB, NOUN, ...
     - named entity recognition (NER) -> classify as PERSON, LOC, ...
     - phrase extraction (CHUNKS)
     - see https://stackabuse.com/python-for-nlp-parts-of-speech-tagging-and-named-entity-recognition/
 
-# Questions
-
-## How to run NER training using run_ner.py
+## How to run NER training using run_ner.py?
 
 ```bash
 pip install datasets
@@ -45,14 +90,9 @@ python3 run_ner.py \
   --overwrite_output_dir
 ```
 
-## How does custom dataset need to look like? (instead of conll2003?)
-
-- https://huggingface.co/docs/datasets/loading_datasets.html#from-local-or-remote-files
-  - does huggingface use IOB or IOB2 format?
-
 ## How to compute metric?
 
-- see https://huggingface.co/metrics/seqeval 
+- see https://huggingface.co/metrics/seqeval
 - forwards to https://github.com/chakki-works/seqeval
 
 ```python
@@ -61,10 +101,6 @@ python3 run_ner.py \
 >>> f1_score(y_true, y_pred)
 0.50
 ```
-
-## How does head of CNN look like (labels -> softmax?)
-
-- simply parse num_labels, id2label, label2id
 
 ## How to label using doccano?
 
@@ -90,32 +126,3 @@ docker container stop doccano -t 5
 
 - ['EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'lamb', '.']
 - ['[CLS]', 'EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'la', '##mb', '.', '[SEP]', '[PAD]', '[PAD]', ...]
-
-### Exported text file is binary :/
-
-- https://github.com/doccano/doccano/issues/1606
-- Workaround: Simply create manually using JSONL
-
-```json
-{"text": "EU rejects German call to boycott British lamb.", "label": [ [0, 2, "ORG"], [11, 17, "MISC"], ... ]}
-{"text": "Peter Blackburn", "label": [ [0, 15, "PERSON"] ]}
-{"text": "President Obama", "label": [ [10, 15, "PERSON"] ]}
-```
-
-
-# How to setup project next time
-
-- setup DOCKERFILE
-  - use GPU?!
-  - use colored terminal https://stackoverflow.com/a/33499558/2135504
-  - use own ID
-    - https://issueexplorer.com/issue/microsoft/vscode-remote-release/5542
-    - https://medium.com/redbubble/running-a-docker-container-as-a-non-root-user-7d2e00f8ee15
-- setup README.md
-- git init -> first commit
-- setup .vscode
-  - use dockerfile
-  - install python
-  - git?! - always not sure whether from inside or outside container...
-
-- also, when open in docker-remote cannot open locally?! check permissions... 

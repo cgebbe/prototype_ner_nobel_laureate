@@ -13,6 +13,7 @@
 		"ms-python.python", 
 		"njpwerner.autodocstring",
 		"yzhang.markdown-all-in-one",
+		"esbenp.prettier-vscode",
 	],
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [

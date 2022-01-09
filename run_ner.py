@@ -1,3 +1,6 @@
+"""
+Based on https://github.com/huggingface/transformers/blob/master/examples/pytorch/token-classification/run_ner.py
+"""
 #!/usr/bin/env python
 # coding=utf-8
 # Copyright 2020 The HuggingFace Team All rights reserved.
