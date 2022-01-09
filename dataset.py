@@ -101,16 +101,17 @@ class Conll2003(datasets.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager):
-        PATH = "data/NER_Einstein/labels/label_studio/project-1-at-2022-01-05-07-27-94006446.conll"
+        TRAIN_PATH = "data/labels_train.conll"
+        TEST_PATH = "data/labels_test.conll"
         return [
             datasets.SplitGenerator(
-                name=datasets.Split.TRAIN, gen_kwargs={"filepath": PATH}
+                name=datasets.Split.TRAIN, gen_kwargs={"filepath": TRAIN_PATH}
             ),
             datasets.SplitGenerator(
-                name=datasets.Split.VALIDATION, gen_kwargs={"filepath": PATH}
+                name=datasets.Split.VALIDATION, gen_kwargs={"filepath": TRAIN_PATH}
             ),
             datasets.SplitGenerator(
-                name=datasets.Split.TEST, gen_kwargs={"filepath": PATH}
+                name=datasets.Split.TEST, gen_kwargs={"filepath": TEST_PATH}
             ),
         ]
 

@@ -1,4 +1,6 @@
-# from https://huggingface.co/dslim/bert-base-NER
+"""
+Copied from https://huggingface.co/dslim/bert-base-NER
+"""
 
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 from transformers import pipeline

@@ -1,7 +1,9 @@
+"""
+Based on https://huggingface.co/docs/transformers/task_summary#named-entity-recognition
+"""
 import functools
 
 from datasets.load import load_dataset
-from numpy.core.fromnumeric import shape
 from transformers import AutoModelForTokenClassification, AutoTokenizer
 from datasets import load_dataset
 import torch
@@ -38,8 +40,8 @@ elif 1:
         functools.partial(utils.preprocess, padding=False),
         batched=True,
     )
-    ds_train = ds["train"].shuffle(seed=42).select(range(num_items))
-    item = ds_train[4]
+    subset = ds["test"].shuffle(seed=42)  # .select(range(num_items))
+    item = subset[0]
     text = item["tokens"]
 
     tokens = {
@@ -57,8 +59,7 @@ if 0:
 elif 1:
     # from pretrained
     model = AutoModelForTokenClassification.from_pretrained(
-        "output/20220107_060748/checkpoint-30",
-        # "output/20220104_183918/checkpoint-3",
+        "output/20220109_095156/checkpoint-20",
         cache_dir=".cache",
     )
 
@@ -73,7 +74,7 @@ if 1:
     tokens = [utils.tokenizer.decode(x) for x in item["input_ids"]]
     assert len(y_pred) == len(y_true) == len(tokens)
 
-    labels = ds_train.features["ner_tags"].feature.names
+    labels = subset.features["ner_tags"].feature.names
     labels_true = utils.convert_classes_to_labels([y_true], [y_true], labels)[0]
     labels_pred = utils.convert_classes_to_labels([y_pred], [y_true], labels)[0]
     valid_tokens = [t for t, l in zip(tokens, y_true) if l >= 0]
@@ -84,5 +85,5 @@ if 1:
     )
 
     np.testing.assert_equal(df["labels_true"].values, df["labels_pred"].values)
-
-    d = 0
+    with pd.option_context("display.max_rows", 0):
+        print(df)

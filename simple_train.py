@@ -1,5 +1,5 @@
 """
-Train example from https://huggingface.co/docs/transformers/training
+Based on finetuning example from https://huggingface.co/docs/transformers/training
 """
 import transformers
 from datasets import load_dataset, load_metric
@@ -65,8 +65,8 @@ raw_datasets = load_dataset(
     cache_dir=".cache",
 )
 ds = raw_datasets.map(utils.preprocess, batched=True)
-ds_train = ds["train"].shuffle(seed=42).select(range(num_items))
-ds_eval = ds["test"].shuffle(seed=42).select(range(num_items))
+ds_train = ds["train"].shuffle(seed=42)  # .select(range(num_items))
+ds_eval = ds["validation"].shuffle(seed=42)  # .select(range(num_items))
 
 labels = raw_datasets["train"].features["ner_tags"].feature.names
 
@@ -82,10 +82,11 @@ model = transformers.AutoModelForTokenClassification.from_pretrained(
 output_dir = f"output/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 training_args = transformers.TrainingArguments(
     # --- how to train
-    num_train_epochs=30,  # defaults to 3
+    num_train_epochs=20,  # defaults to 3
     per_device_train_batch_size=1,  # defaults to 8
     gradient_accumulation_steps=8,  # defaults to 1
-    # TODO: learning rate seems to decrease linearly :/
+    learning_rate=5e-5,  # defaults to 5e-5
+    lr_scheduler_type="constant",  # defaults to linear
     # no_cuda=True,  # if GPU too small, see https://github.com/google-research/bert/blob/master/README.md#out-of-memory-issues
     # --- how to log
     output_dir=output_dir,
@@ -101,7 +102,7 @@ trainer = transformers.Trainer(
     train_dataset=ds_train,
     eval_dataset=ds_eval,
     compute_metrics=create_metric_function(labels),
-    # callbacks=[transformers.integrations.TensorBoardCallback()],
+    # callbacks=[transformers.integrations.TensorBoardCallback()],  # already default
 )
 train_output = trainer.train()
 pprint(train_output.metrics)
@@ -109,4 +110,4 @@ pprint(train_output.metrics)
 evaluation_metrics = trainer.evaluate()
 pprint(evaluation_metrics)
 
-d = 0
+print(f"Saved in {output_dir}")
